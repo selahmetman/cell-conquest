@@ -1,8 +1,10 @@
 ; Engine configuration file.
 ; It's best edited using the editor UI and not directly,
-; but this is the file format if you need to edit it manually.
-
-[configuration]
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
 
 config_version=5
 
@@ -20,24 +22,23 @@ config/icon="res://assets/sprites/icon.png"
 NetworkManager="*res://scripts/NetworkManager.gd"
 GameManager="*res://scripts/GameManager.gd"
 
+[configuration]
+
+config_version=5
+
 [display]
 
 window/size/viewport_width=1080
 window/size/viewport_height=1920
-window/size/resizable=true
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/handheld/orientation="sensor_landscape"
-
-[rendering]
-
-renderer/rendering_method="mobile"
-textures/canvas_textures/default_texture_filter=0
 
 [input]
 
 drag_threshold=8.0
 
-[physics]
+[rendering]
 
-common/physics_ticks_per_second=60
+textures/canvas_textures/default_texture_filter=0
+renderer/rendering_method="mobile"

@@ -1,197 +1,189 @@
-import { Room, Client } from "@colyseus/core";
-import { GameState, CellState, PlayerState, TroopMovement } from "../schema/GameState";
+import { WebSocket } from "ws";
+import { v4 as uuidv4 } from "uuid";
 
-const TICK_RATE       = 20;          // Hz
-const GROWTH_INTERVAL = 1000;        // ms
-const GAME_DURATION   = 180;         // seconds
-const TROOP_SPEED     = 200;         // pixels/second
-const MIN_SEND_RATIO  = 0.5;         // minimum fraction of strength to send
-const MAX_PLAYERS     = 6;
+const TICK_MS        = 50;    // 20 Hz
+const GROWTH_MS      = 1000;
+const GAME_DURATION  = 180;   // seconds
+const TROOP_SPEED    = 200;   // px/s
+const MIN_SEND_RATIO = 0.5;
+const MAX_PLAYERS    = 6;
 
-interface SendTroopsCmd {
-  type: "send_troops";
-  from: number;
-  to: number;
-  amount: number;
+interface Cell {
+  id: number;
+  owner: string;
+  strength: number;
+  x: number;
+  y: number;
+  radius: number;
 }
 
-export class GameRoom extends Room<GameState> {
-  maxClients = MAX_PLAYERS;
-  private _growthTimer = 0;
-  private _tickInterval!: ReturnType<typeof setInterval>;
+interface Movement {
+  id: string;
+  fromId: number;
+  toId: number;
+  amount: number;
+  ownerId: string;
+  progress: number;
+  dist: number;
+}
 
-  onCreate(_options: unknown) {
-    this.setState(new GameState());
+interface Player {
+  id: string;
+  name: string;
+  ws: WebSocket;
+  cellCount: number;
+}
+
+export class GameRoom {
+  readonly id: string;
+  private players = new Map<string, Player>();
+  private cells: Cell[] = [];
+  private movements: Movement[] = [];
+  private timeRemaining = GAME_DURATION;
+  private gameActive = false;
+  private tickTimer: ReturnType<typeof setInterval> | null = null;
+  private growthAccum = 0;
+
+  constructor() {
+    this.id = uuidv4().slice(0, 8);
     this._spawnCells();
-    this.onMessage("send_troops", (client, msg: SendTroopsCmd) => {
-      this._handleSendTroops(client.sessionId, msg);
-    });
   }
 
-  onJoin(client: Client, options: { name?: string }) {
-    const player = new PlayerState();
-    player.id   = client.sessionId;
-    player.name = options?.name ?? `Player ${this.clients.length}`;
-    this.state.players.set(client.sessionId, player);
+  get playerCount() { return this.players.size; }
+  get isFull()      { return this.players.size >= MAX_PLAYERS; }
 
-    this._assignStartingCell(client.sessionId);
+  join(ws: WebSocket, name: string): string {
+    const pid = uuidv4().slice(0, 8);
+    this.players.set(pid, { id: pid, name, ws, cellCount: 0 });
+    this._assignStartingCell(pid);
 
-    if (this.clients.length >= 2 && !this.state.gameActive) {
-      this._startGame();
+    ws.send(JSON.stringify({ type: "room_joined", room_id: this.id, player_id: pid }));
+
+    if (this.players.size >= 2 && !this.gameActive) this._startGame();
+    else this._broadcastState();
+
+    return pid;
+  }
+
+  leave(pid: string) {
+    this.players.delete(pid);
+    // Neutral the player's cells so others can capture them
+    for (const c of this.cells) {
+      if (c.owner === pid) { c.owner = ""; c.strength = Math.max(1, Math.floor(c.strength / 2)); }
     }
   }
 
-  onLeave(client: Client, _consented: boolean) {
-    const player = this.state.players.get(client.sessionId);
-    if (player) player.connected = false;
+  handleMessage(pid: string, msg: { type: string; from?: number; to?: number }) {
+    if (msg.type === "send_troops" && msg.from !== undefined && msg.to !== undefined) {
+      this._sendTroops(pid, msg.from, msg.to);
+    }
   }
-
-  onDispose() {
-    clearInterval(this._tickInterval);
-  }
-
-  // ── Private ──────────────────────────────────────────────────────────────
 
   private _startGame() {
-    this.state.gameActive   = true;
-    this.state.timeRemaining = GAME_DURATION;
-
-    this._tickInterval = setInterval(() => this._tick(1 / TICK_RATE), 1000 / TICK_RATE);
+    this.gameActive = true;
+    this.timeRemaining = GAME_DURATION;
+    this.tickTimer = setInterval(() => this._tick(), TICK_MS);
+    this._broadcast({ type: "game_started" });
   }
 
-  private _tick(dt: number) {
-    if (!this.state.gameActive) return;
+  private _tick() {
+    this.timeRemaining -= TICK_MS / 1000;
 
-    this.state.timeRemaining -= dt;
-    if (this.state.timeRemaining <= 0) {
-      this._endGame();
-      return;
+    this.growthAccum += TICK_MS;
+    if (this.growthAccum >= GROWTH_MS) {
+      this.growthAccum = 0;
+      for (const c of this.cells)
+        if (c.owner !== "") c.strength = Math.min(100, c.strength + 1);
     }
 
-    this._growthTimer += dt * 1000;
-    if (this._growthTimer >= GROWTH_INTERVAL) {
-      this._growthTimer = 0;
-      this._applyGrowth();
+    // Move troops
+    const resolved: Movement[] = [];
+    for (const mv of this.movements) {
+      mv.progress += (TROOP_SPEED * TICK_MS / 1000) / mv.dist;
+      if (mv.progress >= 1) { this._resolve(mv); resolved.push(mv); }
     }
+    this.movements = this.movements.filter(m => !resolved.includes(m));
 
-    this._updateMovements(dt);
     this._updateCellCounts();
+    this._broadcastState();
+
+    if (this.timeRemaining <= 0) this._endGame();
   }
 
-  private _applyGrowth() {
-    for (const cell of this.state.cells) {
-      if (cell.owner !== "" && cell.strength < 100) {
-        cell.strength = Math.min(100, cell.strength + 1);
-      }
-    }
-  }
-
-  private _updateMovements(dt: number) {
-    const done: TroopMovement[] = [];
-
-    for (const mv of this.state.movements) {
-      const from = this.state.cells[mv.fromId];
-      const to   = this.state.cells[mv.toId];
-      if (!from || !to) { done.push(mv); continue; }
-
-      const dist = Math.hypot(to.x - from.x, to.y - from.y);
-      mv.progress += (TROOP_SPEED * dt) / dist;
-
-      if (mv.progress >= 1) {
-        this._resolveBattle(mv);
-        done.push(mv);
-      }
-    }
-
-    for (const mv of done) {
-      const idx = this.state.movements.indexOf(mv);
-      if (idx !== -1) this.state.movements.splice(idx, 1);
-    }
-  }
-
-  private _resolveBattle(mv: TroopMovement) {
-    const target = this.state.cells[mv.toId];
+  private _resolve(mv: Movement) {
+    const target = this.cells[mv.toId];
     if (!target) return;
-
     if (target.owner === mv.ownerId) {
       target.strength = Math.min(100, target.strength + mv.amount);
     } else {
       target.strength -= mv.amount;
       if (target.strength < 0) {
-        target.owner    = mv.ownerId;
+        target.owner = mv.ownerId;
         target.strength = Math.abs(target.strength);
       }
     }
   }
 
-  private _handleSendTroops(playerId: string, msg: SendTroopsCmd) {
-    const from = this.state.cells[msg.from];
-    if (!from || from.owner !== playerId || from.strength <= 1) return;
-
-    const amount = Math.floor(from.strength * MIN_SEND_RATIO);
+  private _sendTroops(pid: string, fromId: number, toId: number) {
+    const from = this.cells[fromId];
+    if (!from || from.owner !== pid || from.strength <= 1) return;
+    const amount = Math.max(1, Math.floor(from.strength * MIN_SEND_RATIO));
     from.strength -= amount;
-
-    const mv = new TroopMovement();
-    mv.fromId   = msg.from;
-    mv.toId     = msg.to;
-    mv.amount   = amount;
-    mv.ownerId  = playerId;
-    mv.progress = 0;
-    this.state.movements.push(mv);
+    const to = this.cells[toId];
+    const dist = Math.hypot(to.x - from.x, to.y - from.y);
+    this.movements.push({ id: uuidv4(), fromId, toId, amount, ownerId: pid, progress: 0, dist });
   }
 
   private _updateCellCounts() {
-    for (const [pid, player] of this.state.players) {
-      let count = 0;
-      for (const cell of this.state.cells) {
-        if (cell.owner === pid) count++;
-      }
-      player.cellCount = count;
-    }
+    for (const [pid, p] of this.players)
+      p.cellCount = this.cells.filter(c => c.owner === pid).length;
   }
 
   private _endGame() {
-    clearInterval(this._tickInterval);
-    this.state.gameActive = false;
-
-    let winnerId = "";
-    let maxCells = -1;
-    for (const [pid, player] of this.state.players) {
-      if (player.cellCount > maxCells) {
-        maxCells = player.cellCount;
-        winnerId = pid;
-      }
+    if (this.tickTimer) { clearInterval(this.tickTimer); this.tickTimer = null; }
+    this.gameActive = false;
+    let winnerId = "", maxCells = -1;
+    for (const [pid, p] of this.players) {
+      if (p.cellCount > maxCells) { maxCells = p.cellCount; winnerId = pid; }
     }
+    this._broadcast({ type: "game_over", winner_id: winnerId });
+  }
 
-    this.broadcast("game_over", { winner_id: winnerId });
+  private _broadcastState() {
+    const playerList: Record<string, { name: string; cell_count: number }> = {};
+    for (const [pid, p] of this.players)
+      playerList[pid] = { name: p.name, cell_count: p.cellCount };
+
+    const payload = {
+      type: "state",
+      time_remaining: Math.max(0, this.timeRemaining),
+      game_active: this.gameActive,
+      players: playerList,
+      cells: this.cells.map(c => ({ id: c.id, owner: c.owner, strength: c.strength, x: c.x, y: c.y, radius: c.radius })),
+      movements: this.movements.map(m => ({ from: m.fromId, to: m.toId, progress: m.progress, owner: m.ownerId })),
+    };
+    this._broadcast(payload);
+  }
+
+  private _broadcast(msg: object) {
+    const raw = JSON.stringify(msg);
+    for (const p of this.players.values())
+      if (p.ws.readyState === WebSocket.OPEN) p.ws.send(raw);
   }
 
   private _spawnCells() {
-    // 16 cells in a 4x4 grid layout
-    const cols = 4, rows = 4;
-    const spacingX = 200, spacingY = 200;
-    const offsetX = 300, offsetY = 200;
+    const cols = 4, rows = 4, sx = 220, sy = 200, ox = 140, oy = 160;
     let id = 0;
-
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const cell   = new CellState();
-        cell.id      = id++;
-        cell.owner   = "";
-        cell.strength = 5;
-        cell.x       = offsetX + c * spacingX;
-        cell.y       = offsetY + r * spacingY;
-        cell.radius  = 50;
-        this.state.cells.push(cell);
-      }
-    }
+    for (let r = 0; r < rows; r++)
+      for (let c = 0; c < cols; c++)
+        this.cells.push({ id: id++, owner: "", strength: 5, x: ox + c * sx, y: oy + r * sy, radius: 50 });
   }
 
-  private _assignStartingCell(playerId: string) {
-    const neutralCells = this.state.cells.filter(c => c.owner === "");
-    if (neutralCells.length === 0) return;
-    const cell   = neutralCells[Math.floor(Math.random() * neutralCells.length)];
-    cell.owner   = playerId;
+  private _assignStartingCell(pid: string) {
+    const neutral = this.cells.filter(c => c.owner === "");
+    if (!neutral.length) return;
+    const cell = neutral[Math.floor(Math.random() * neutral.length)];
+    cell.owner = pid;
     cell.strength = 20;
   }
 }
