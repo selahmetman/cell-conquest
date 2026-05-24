@@ -1,57 +1,74 @@
 extends Node2D
 class_name Cell
 
-signal drag_started(cell: Cell)
-signal drag_ended(from_cell: Cell, to_cell: Cell)
+signal drag_start(cell: Cell)
 
-const PLAYER_COLORS := {
-	"": Color(0.5, 0.5, 0.5),      # neutral
-	"p1": Color(0.2, 0.6, 1.0),
-	"p2": Color(1.0, 0.3, 0.3),
-	"p3": Color(0.2, 0.9, 0.4),
-	"p4": Color(1.0, 0.8, 0.1),
-	"p5": Color(0.9, 0.3, 0.9),
-	"p6": Color(0.3, 0.9, 0.9),
-}
+var cell_id  : int    = 0
+var owner_id : String = ""
+var strength : int    = 0
+var radius   : float  = 50.0
+var _color   := Color(0.4, 0.4, 0.4)
 
-var cell_id: int = 0
-var owner_id: String = ""
-var strength: int = 0
-var radius: float = 50.0
-
-@onready var circle: Node2D = $Circle
-@onready var label: Label = $Label
-@onready var area: Area2D = $Area2D
+@onready var _label : Label  = $Label
+@onready var _area  : Area2D = $Area2D
 
 
 func _ready() -> void:
-	area.input_event.connect(_on_area_input)
+	_area.input_event.connect(_on_input)
+	_update_collision()
 
 
 func apply_state(data: Dictionary) -> void:
-	var new_owner: String = data.get("owner", "")
-	var new_strength: int = data.get("strength", 0)
-
+	var new_owner : String = data.get("owner", "")
 	if new_owner != owner_id:
 		owner_id = new_owner
-		_play_capture_animation()
-
-	strength = new_strength
-	label.text = str(strength)
-	circle.modulate = PLAYER_COLORS.get(owner_id, PLAYER_COLORS[""])
+		_color = _color_for(owner_id)
+		_animate_capture()
+	strength = data.get("strength", 0)
+	_label.text = str(strength)
+	queue_redraw()
 
 
 func is_mine() -> bool:
 	return owner_id == GameManager.local_player_id
 
 
-func _play_capture_animation() -> void:
-	var tween := create_tween()
-	tween.tween_property(circle, "scale", Vector2(1.3, 1.3), 0.15)
-	tween.tween_property(circle, "scale", Vector2(1.0, 1.0), 0.15)
+# ── Drawing ──────────────────────────────────────────────────────────────────
+
+func _draw() -> void:
+	draw_circle(Vector2(3, 3), radius, Color(0, 0, 0, 0.25))   # gölge
+	draw_circle(Vector2.ZERO, radius, _color)
+	var border := _color.lightened(0.4)
+	draw_arc(Vector2.ZERO, radius, 0.0, TAU, 64, border, 3.0)
+	if is_mine():
+		draw_arc(Vector2.ZERO, radius - 5, 0.0, TAU, 64, Color(1, 1, 1, 0.6), 2.0)
 
 
-func _on_area_input(_viewport, event: InputEvent, _shape_idx: int) -> void:
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		if event.pressed:
-			drag_started.emit(self)
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+static func _color_for(pid: String) -> Color:
+	if pid == "":
+		return Color(0.35, 0.35, 0.4)
+	var h := fmod(float(pid.hash() & 0xFFFF) / 65535.0, 1.0)
+	return Color.from_hsv(h, 0.75, 0.95)
+
+
+func _animate_capture() -> void:
+	var tw := create_tween()
+	tw.tween_property(self, "scale", Vector2(1.25, 1.25), 0.12)
+	tw.tween_property(self, "scale", Vector2(1.0,  1.0),  0.12)
+
+
+func _update_collision() -> void:
+	var shape := CircleShape2D.new()
+	shape.radius = radius
+	var col := CollisionShape2D.new()
+	col.shape = shape
+	_area.add_child(col)
+
+
+func _on_input(_viewport: Node, event: InputEvent, _shape: int) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		drag_start.emit(self)
+	elif event is InputEventScreenTouch and event.pressed:
+		drag_start.emit(self)

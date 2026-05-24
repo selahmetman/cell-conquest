@@ -1,45 +1,61 @@
 extends Control
 
-@onready var play_btn: Button        = $VBox/PlayButton
-@onready var leaderboard_btn: Button = $VBox/LeaderboardButton
-@onready var status_label: Label     = $VBox/StatusLabel
+@onready var play_btn:      Button = $VBox/PlayButton
+@onready var status_label:  Label  = $VBox/StatusLabel
 
 
 func _ready() -> void:
+	play_btn.disabled = true
 	play_btn.pressed.connect(_on_play_pressed)
-	leaderboard_btn.pressed.connect(_on_leaderboard_pressed)
 
-	NetworkManager.connected.connect(_on_server_connected)
+	NetworkManager.connected.connect(_on_connected)
 	NetworkManager.room_joined.connect(_on_room_joined)
 	NetworkManager.error_received.connect(_on_error)
+	NetworkManager.disconnected.connect(_on_disconnected)
 
-	status_label.text = "Sunucuya bağlanılıyor..."
-	# Yerel geliştirme için use_local=true, production'da false
-	NetworkManager.connect_to_server(true)
+	_set_status("Sunucuya bağlanılıyor...")
+	NetworkManager.connect_to_server(true)   # true = yerel sunucu
 
 
-func _on_server_connected() -> void:
-	status_label.text = ""
+func _on_connected() -> void:
+	print("[UI] Sunucuya bağlandı")
+	_set_status("")
 	play_btn.disabled = false
 
 
 func _on_play_pressed() -> void:
 	play_btn.disabled = true
-	play_btn.text = "Bağlanıyor..."
-	status_label.text = "Oda aranıyor..."
+	_set_status("Oda aranıyor...")
 	NetworkManager.join_room()
 
 
-func _on_room_joined(room_id: String, player_id: String) -> void:
+func _on_room_joined(_room_id: String, player_id: String) -> void:
+	print("[UI] Odaya girildi, player_id=", player_id)
 	GameManager.local_player_id = player_id
 	get_tree().change_scene_to_file("res://scenes/Main.tscn")
 
 
 func _on_error(message: String) -> void:
-	status_label.text = "Hata: " + message
+	_set_status("Hata: " + message)
 	play_btn.disabled = false
+	play_btn.text = "TEKRAR DENE"
+	play_btn.pressed.disconnect(_on_play_pressed)
+	play_btn.pressed.connect(_on_retry)
+
+
+func _on_retry() -> void:
 	play_btn.text = "OYNA"
+	play_btn.disabled = true
+	play_btn.pressed.disconnect(_on_retry)
+	play_btn.pressed.connect(_on_play_pressed)
+	_set_status("Yeniden bağlanılıyor...")
+	NetworkManager.connect_to_server(true)
 
 
-func _on_leaderboard_pressed() -> void:
-	pass
+func _on_disconnected() -> void:
+	_set_status("Bağlantı kesildi")
+	play_btn.disabled = true
+
+
+func _set_status(text: String) -> void:
+	status_label.text = text

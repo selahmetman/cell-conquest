@@ -1,76 +1,69 @@
 extends Node
 
-# Touch + mouse drag abstraction for cell selection
-
-signal troops_sent(from_cell: Cell, to_cell: Cell)
-
-var _drag_from: Cell = null
-var _drag_line: Line2D = null
+var _drag_from : Cell = null
+var _line      : Line2D
 
 
 func _ready() -> void:
-	_drag_line = Line2D.new()
-	_drag_line.default_color = Color(1, 1, 1, 0.5)
-	_drag_line.width = 3.0
-	_drag_line.visible = false
-	add_child(_drag_line)
-
-
-func _input(event: InputEvent) -> void:
-	if event is InputEventScreenDrag or event is InputEventMouseMotion:
-		if _drag_from:
-			_update_drag_line(_get_event_position(event))
-
-	elif _is_release_event(event):
-		if _drag_from:
-			_finish_drag(_get_event_position(event))
+	_line = Line2D.new()
+	_line.default_color = Color(1, 1, 1, 0.45)
+	_line.width = 4.0
+	_line.visible = false
+	get_parent().add_child(_line)
 
 
 func start_drag(from_cell: Cell) -> void:
 	if not from_cell.is_mine():
 		return
 	_drag_from = from_cell
-	_drag_line.clear_points()
-	_drag_line.add_point(from_cell.global_position)
-	_drag_line.add_point(from_cell.global_position)
-	_drag_line.visible = true
+	_line.clear_points()
+	_line.add_point(from_cell.global_position)
+	_line.add_point(from_cell.global_position)
+	_line.visible = true
 
 
-func _finish_drag(end_pos: Vector2) -> void:
-	_drag_line.visible = false
-	var target := _find_cell_at(end_pos)
-	if target and target != _drag_from:
-		troops_sent.emit(_drag_from, target)
-	_drag_from = null
+func _input(event: InputEvent) -> void:
+	if _drag_from == null:
+		return
+
+	var pos := _event_pos(event)
+	if pos == Vector2.INF:
+		return
+
+	if _is_move(event):
+		if _line.get_point_count() >= 2:
+			_line.set_point_position(1, pos)
+
+	elif _is_release(event):
+		_line.visible = false
+		var target := _cell_at(pos)
+		if target and target != _drag_from:
+			GameManager.send_troops(_drag_from.cell_id, target.cell_id, 0)
+		_drag_from = null
 
 
-func _update_drag_line(pos: Vector2) -> void:
-	if _drag_line.get_point_count() >= 2:
-		_drag_line.set_point_position(1, pos)
-
-
-func _find_cell_at(pos: Vector2) -> Cell:
+func _cell_at(pos: Vector2) -> Cell:
 	for cell in GameManager.cells.values():
 		if cell.global_position.distance_to(pos) <= cell.radius:
 			return cell
 	return null
 
 
-func _get_event_position(event: InputEvent) -> Vector2:
-	if event is InputEventScreenDrag:
+func _event_pos(event: InputEvent) -> Vector2:
+	if event is InputEventMouseMotion or event is InputEventMouseButton:
 		return event.position
-	if event is InputEventMouseMotion:
+	if event is InputEventScreenDrag or event is InputEventScreenTouch:
 		return event.position
-	if event is InputEventScreenTouch:
-		return event.position
-	if event is InputEventMouseButton:
-		return event.position
-	return Vector2.ZERO
+	return Vector2.INF
 
 
-func _is_release_event(event: InputEvent) -> bool:
-	if event is InputEventScreenTouch and not event.pressed:
-		return true
+func _is_move(event: InputEvent) -> bool:
+	return event is InputEventMouseMotion or event is InputEventScreenDrag
+
+
+func _is_release(event: InputEvent) -> bool:
 	if event is InputEventMouseButton and not event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		return true
+	if event is InputEventScreenTouch and not event.pressed:
 		return true
 	return false
