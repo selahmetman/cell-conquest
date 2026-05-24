@@ -16,12 +16,9 @@ var cells: Dictionary = {}     # cell_id  -> Cell node
 var game_active := false
 var time_remaining := GAME_DURATION
 
-@onready var network: Node = $"/root/NetworkManager"
-
-
 func _ready() -> void:
-	network.state_updated.connect(_on_state_updated)
-	network.game_over.connect(_on_game_over)
+	NetworkManager.state_updated.connect(_on_state_updated)
+	NetworkManager.game_over.connect(_on_game_over)
 
 
 func _process(delta: float) -> void:
@@ -35,7 +32,7 @@ func _process(delta: float) -> void:
 func send_troops(from_id: int, to_id: int, amount: int) -> void:
 	if not game_active:
 		return
-	network.send_command({
+	NetworkManager.send_command({
 		"type": "send_troops",
 		"from": from_id,
 		"to": to_id,

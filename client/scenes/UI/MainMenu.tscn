@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://main_menu"]
 
-[ext_resource type="Script" path="res://scripts/MainMenuUI.gd" id="1"]
+[ext_resource type="Script" path="res://scenes/UI/MainMenuUI.gd" id="1"]
 
 [node name="MainMenu" type="Control"]
 layout_mode = 3
@@ -38,7 +38,14 @@ theme_override_font_sizes/font_size = 20
 [node name="Spacer" type="Control" parent="VBox"]
 custom_minimum_size = Vector2(0, 40)
 
+[node name="StatusLabel" type="Label" parent="VBox"]
+text = ""
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 16
+theme_override_colors/font_color = Color(0.7, 0.7, 1.0, 1)
+
 [node name="PlayButton" type="Button" parent="VBox"]
+disabled = true
 text = "OYNA"
 custom_minimum_size = Vector2(300, 60)
 theme_override_font_sizes/font_size = 28
