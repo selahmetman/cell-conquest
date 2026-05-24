@@ -1,0 +1,38 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; but this is the file format if you need to edit it manually.
+
+[configuration]
+
+config_version=5
+
+[application]
+
+config/name="Cell Conquest"
+config/description="Real-time multiplayer cell strategy game"
+config/version="1.0.0"
+run/main_scene="res://scenes/UI/MainMenu.tscn"
+config/features=PackedStringArray("4.3", "Mobile")
+config/icon="res://assets/sprites/icon.png"
+
+[display]
+
+window/size/viewport_width=1080
+window/size/viewport_height=1920
+window/size/resizable=true
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/handheld/orientation="sensor_landscape"
+
+[rendering]
+
+renderer/rendering_method="mobile"
+textures/canvas_textures/default_texture_filter=0
+
+[input]
+
+drag_threshold=8.0
+
+[physics]
+
+common/physics_ticks_per_second=60

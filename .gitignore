@@ -1,0 +1,23 @@
+# Godot
+client/.godot/
+client/export/
+*.import
+*.translation
+
+# Node.js
+server/node_modules/
+server/dist/
+server/.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Builds
+*.apk
+*.ipa
+*.aab

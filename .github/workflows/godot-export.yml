@@ -1,0 +1,67 @@
+name: Godot Export
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "client/**"
+      - ".github/workflows/godot-export.yml"
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.3
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup export templates
+        run: |
+          mkdir -p ~/.local/share/godot/export_templates/4.3.stable
+          mv /root/.local/share/godot/export_templates/4.3.stable \
+             ~/.local/share/godot/export_templates/4.3.stable
+
+      - name: Create export directories
+        run: mkdir -p client/export/web client/export/android
+
+      - name: Export HTML5
+        working-directory: client
+        run: |
+          godot --headless --export-release "HTML5" export/web/index.html
+
+      - name: Export Android APK
+        working-directory: client
+        run: |
+          godot --headless --export-release "Android" export/android/cell_conquest.apk
+
+      - name: Upload HTML5 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: client/export/web/
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: client/export/android/cell_conquest.apk
+
+      - name: Deploy HTML5 to Netlify
+        if: github.ref == 'refs/heads/main'
+        uses: nwtgck/actions-netlify@v3
+        with:
+          publish-dir: client/export/web
+          production-deploy: true
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+
+      - name: Create GitHub Release with APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: client/export/android/cell_conquest.apk
